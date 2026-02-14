@@ -18,8 +18,8 @@ safetensors = "0.7.0"
 tracing = "0.1.43"
 tracing-perfetto-sdk-schema = "0.13.0"
 prost = "0.14.1"
-half = "2.7.1"
-pretty-duration = {git="https://github.com/jafioti/pretty-duration"}
+half = { version = "2.7.1", features = ["num-traits"] }
+pretty-duration = "0.1.1"
 bytemuck = "1.24.0"
 memmap2 = "0.9.9"
 uuid = {version="1.19.0", features=["v4"]}
@@ -28,7 +28,8 @@ libc = "0.2"
 colorize = "*"
 
 [dev-dependencies]
-candle-core = "0.9.1"
+candle-core = { version = "0.9.2-alpha.1", features = ["cuda"] }
 proptest = "1.9.0"
 rand = "0.9.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+num-traits = "0.2"

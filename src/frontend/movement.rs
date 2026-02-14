@@ -5,7 +5,7 @@ use crate::{hlir::Gather, prelude::*};
 impl GraphTensor {
     /// Swap dimensions of the tensor
     pub fn permute(mut self, axes: impl ToAxes) -> GraphTensor {
-        self.shape.permute(&axes.to_axes());
+        self.shape.permute(axes.to_axes());
         self
     }
 

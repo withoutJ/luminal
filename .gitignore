@@ -14,10 +14,11 @@ Cargo.lock
 *.model
 *.gguf
 
-*.proptest-regressions
+
 *.pftrace
 *.safetensors
 *.safetensors.index.json
 tokenizer.json
 **/.cache
 **/proptest-regressions
+opencode.json

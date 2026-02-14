@@ -1,11 +1,10 @@
 {
     "name": "Luminal",
-    "image":"ghcr.io/luminal-ai/luminal-docker:latest",
+    "image": "ghcr.io/luminal-ai/luminal-docker:latest",
     "runArgs": [
-        "--privileged",
-        "--gpus=all",
-        "--pull=always"
+        "--gpus=all"
     ],
+    "postStartCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
     "customizations": {
         "vscode": {
             "extensions": [

@@ -6,6 +6,7 @@ use crate::{
 use cudarc::driver::{CudaFunction, CudaModule, CudaSlice, CudaStream, DevicePtr, PinnedHostSlice};
 
 use fixedbitset::FixedBitSet;
+use half::{bf16, f16};
 use itertools::Itertools;
 use luminal::hlir::*;
 use luminal::prelude::{
@@ -26,7 +27,6 @@ use std::{
     collections::{VecDeque, hash_map::Entry},
     fmt::Debug,
     fs::File,
-    mem::size_of,
     sync::Arc,
     time::Duration,
 };
@@ -138,13 +138,18 @@ impl CudaRuntime {
             if let Some(Input { label, .. }) = (*cx.graph[node]).as_any().downcast_ref::<Input>()
                 && let Ok(tensor) = st.tensor(label)
             {
+                self.changed_hlir.insert(node);
                 match tensor.dtype() {
                     safetensors::Dtype::F32 => {
                         let bytes = tensor.data();
                         let f32s: &[f32] = bytemuck::cast_slice(bytes);
                         let dev = f32s.to_cuda_input(&self.cuda_stream);
                         self.hlir_buffers.insert(node, dev);
-                        self.changed_hlir.insert(node);
+                    }
+                    safetensors::Dtype::U8 => {
+                        let bytes = tensor.data();
+                        let dev = bytes.to_cuda_input(&self.cuda_stream);
+                        self.hlir_buffers.insert(node, dev);
                     }
                     dtype => unimplemented!("{dtype} loading not supported yet"),
                 }
@@ -198,11 +203,36 @@ impl CudaRuntime {
         unsafe { Vec::from_raw_parts(float_ptr, n_bytes / 4, n_bytes / 4) }
     }
 
+    pub fn get_bool(&self, id: impl ToId) -> Vec<bool> {
+        self.get_output_data(id)
+            .into_iter()
+            .map(|b| b != 0)
+            .collect()
+    }
+
     pub fn get_i32(&self, id: impl ToId) -> Vec<i32> {
         self.get_output_data(id)
             .chunks_exact(4)
             .map(|c| i32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
             .collect_vec()
+    }
+
+    pub fn get_f16(&self, id: impl ToId) -> Vec<f16> {
+        let bytes = self.get_output_data(id);
+        let bytes = bytes.leak();
+        let n_bytes = bytes.len();
+        let bytes_ptr = bytes.as_mut_ptr();
+        let f16_ptr = bytes_ptr as *mut f16;
+        unsafe { Vec::from_raw_parts(f16_ptr, n_bytes / 2, n_bytes / 2) }
+    }
+
+    pub fn get_bf16(&self, id: impl ToId) -> Vec<bf16> {
+        let bytes = self.get_output_data(id);
+        let bytes = bytes.leak();
+        let n_bytes = bytes.len();
+        let bytes_ptr = bytes.as_mut_ptr();
+        let bf16_ptr = bytes_ptr as *mut bf16;
+        unsafe { Vec::from_raw_parts(bf16_ptr, n_bytes / 2, n_bytes / 2) }
     }
 
     #[tracing::instrument(skip_all)]
@@ -213,55 +243,38 @@ impl CudaRuntime {
                 continue;
             }
             if let Some(op) = self.llir_graph[node].to_dialect::<dyn BlockOp>() {
-                let out_size = op.output_size();
-                let exec_size = out_size.exec(dyn_dims).unwrap();
+                let out_bytes = op.output_bytes();
+                let exec_size = out_bytes.exec(dyn_dims).unwrap();
                 // Skip allocation for ops with zero output size
                 if exec_size == 0 {
                     continue;
                 }
-                self.intermediate_buffer_dims.extend(out_size.dyn_vars());
-                let alloc_bytes = exec_size * size_of::<f32>();
+                self.intermediate_buffer_dims
+                    .extend(op.output_bytes().dyn_vars());
                 self.buffers.insert(
                     node,
                     self.cuda_stream
-                        .alloc_zeros(alloc_bytes)
-                        .unwrap_or_else(|e| {
-                            panic!(
-                                "Failed to alloc {} bytes for BlockOp node {:?}: {:?}",
-                                alloc_bytes, node, e
-                            )
-                        }),
-                );
-                let ptr = self.buffers[&node].device_ptr(&self.cuda_stream).0;
-                self.cached_buffer_ptrs.insert(node, ptr);
-            } else if let Some(op) = self.llir_graph[node].to_dialect::<dyn KernelOp>() {
-                // Kernel nodes remain in the graph for buffer allocation.
-                // Their execution is handled by CudaGraphOp.
-                let out_size = op.output_size();
-                let exec_size = out_size.exec(dyn_dims).unwrap();
-                // Skip allocation for kernels with zero output size (e.g., megakernels)
-                if exec_size == 0 {
-                    continue;
-                }
-                self.intermediate_buffer_dims.extend(out_size.dyn_vars());
-                self.buffers.insert(
-                    node,
-                    self.cuda_stream
-                        .alloc_zeros(exec_size * size_of::<f32>())
+                        .alloc_zeros(op.output_bytes().exec(dyn_dims).unwrap())
                         .unwrap(),
                 );
                 let ptr = self.buffers[&node].device_ptr(&self.cuda_stream).0;
                 self.cached_buffer_ptrs.insert(node, ptr);
+            } else if let Some(op) = self.llir_graph[node].to_dialect::<dyn KernelOp>() {
+                let out_bytes = op.output_bytes();
+                let exec_bytes = out_bytes.exec(dyn_dims).unwrap();
+                if exec_bytes == 0 {
+                    continue;
+                }
+                self.intermediate_buffer_dims.extend(out_bytes.dyn_vars());
+                self.buffers
+                    .insert(node, self.cuda_stream.alloc_zeros(exec_bytes).unwrap());
+                let ptr = self.buffers[&node].device_ptr(&self.cuda_stream).0;
+                self.cached_buffer_ptrs.insert(node, ptr);
             } else if let Some(op) = self.llir_graph[node].to_dialect::<dyn HostOp>() {
-                // Allocate output buffer for this HostOp if it has one
-                let exec_size = op.output_size().exec(dyn_dims).unwrap();
-                if exec_size > 0 {
-                    self.buffers.insert(
-                        node,
-                        self.cuda_stream
-                            .alloc_zeros(exec_size * size_of::<f32>())
-                            .unwrap(),
-                    );
+                let out_bytes = op.output_bytes().exec(dyn_dims).unwrap();
+                if out_bytes > 0 {
+                    self.buffers
+                        .insert(node, self.cuda_stream.alloc_zeros(out_bytes).unwrap());
                     let ptr = self.buffers[&node].device_ptr(&self.cuda_stream).0;
                     self.cached_buffer_ptrs.insert(node, ptr);
                 }
@@ -343,6 +356,42 @@ impl ToCudaInput for Vec<f32> {
                 })
                 .unwrap(),
         )
+    }
+}
+
+impl ToCudaInput for Vec<f16> {
+    fn to_cuda_input(self, stream: &Arc<CudaStream>) -> CudaInput {
+        CudaInput::Buffer(
+            stream
+                .clone_htod(unsafe {
+                    std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2)
+                })
+                .unwrap(),
+        )
+    }
+}
+
+impl ToCudaInput for Vec<bf16> {
+    fn to_cuda_input(self, stream: &Arc<CudaStream>) -> CudaInput {
+        CudaInput::Buffer(
+            stream
+                .clone_htod(unsafe {
+                    std::slice::from_raw_parts(self.as_ptr() as *const u8, self.len() * 2)
+                })
+                .unwrap(),
+        )
+    }
+}
+
+impl ToCudaInput for &[u8] {
+    fn to_cuda_input(self, stream: &Arc<CudaStream>) -> CudaInput {
+        CudaInput::Buffer(stream.clone_htod(self).unwrap())
+    }
+}
+
+impl ToCudaInput for Vec<u8> {
+    fn to_cuda_input(self, stream: &Arc<CudaStream>) -> CudaInput {
+        CudaInput::Buffer(stream.clone_htod(&self).unwrap())
     }
 }
 

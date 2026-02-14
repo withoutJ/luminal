@@ -2,7 +2,7 @@ use colored::Colorize;
 use egglog::{ast::Span, prelude::RustSpan, var};
 use itertools::Itertools;
 use petgraph::{Direction, graph::NodeIndex, visit::EdgeRef};
-use rand::{Rng, rngs::ThreadRng};
+use rand::Rng;
 use rustc_hash::FxHashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -739,6 +739,8 @@ pub fn extract_dtype<'a>(egraph: &'a SerializedEGraph, node: &'a NodeId) -> DTyp
         "Bf16" => DType::Bf16,
         "Int" => DType::Int,
         "Bool" => DType::Bool,
+        "NvFp4" => DType::NvFp4,
+        "Mxfp4" => DType::Mxfp4,
         other => panic!("unknown dtype {other}"),
     }
 }
@@ -864,7 +866,7 @@ pub type EGraphChoiceSet<'a> = FxHashMap<&'a ClassId, &'a NodeId>;
 
 pub fn random_initial_choice<'a>(
     egraph: &'a SerializedEGraph,
-    rng: &mut ThreadRng,
+    rng: &mut impl Rng,
 ) -> EGraphChoiceSet<'a> {
     let mut choices = FxHashMap::default();
     for (eclass, (label, enodes)) in &egraph.eclasses {
@@ -975,7 +977,7 @@ pub fn extract_generation<'a>(
     generation_size: usize,
     mutations_per_generation: usize,
     prev_selected: &mut FxHashSet<u64>,
-    rng: &mut ThreadRng,
+    rng: &mut impl Rng,
 ) -> Vec<EGraphChoiceSet<'a>> {
     // Get list of mutable eclasses (those with more than one enode option)
     let mutable_classes: Vec<&ClassId> = egraph

@@ -49,6 +49,10 @@ pub trait BlockOp: Debug + as_any::AsAny {
     fn output_size(&self) -> Expression {
         unimplemented!()
     }
+    /// Returns the output buffer size in bytes (BlockOps are F32 only).
+    fn output_bytes(&self) -> Expression {
+        self.output_size() * 4
+    }
     fn producer_barriers_seperate(&self) -> Vec<bool>;
     fn consumer_barriers_seperate(&self) -> Vec<Vec<bool>>;
     /// C function body
@@ -986,6 +990,11 @@ impl crate::kernel::KernelOp for MegakernelOp {
         // Megakernels don't have a single output size - they write to multiple buffers.
         // Return 0 as a placeholder; the actual buffer allocation is handled by the
         // individual BlockOps that make up the megakernel.
+        0.into()
+    }
+
+    fn output_bytes(&self) -> Expression {
+        // Megakernels don't have a single output - buffer allocation is per-BlockOp.
         0.into()
     }
 

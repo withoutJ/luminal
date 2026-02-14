@@ -448,6 +448,12 @@ impl<const N: usize> ToAxes for &[usize; N] {
     }
 }
 
+impl ToAxes for &Vec<usize> {
+    fn to_axes(&self) -> Vec<usize> {
+        self.to_vec()
+    }
+}
+
 pub trait ToShape {
     fn to_shape(self) -> Vec<Expression>;
 }

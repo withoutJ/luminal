@@ -397,7 +397,7 @@ mod tests {
 
     use crate::cuda_bandwidth_gbps;
     use crate::runtime::CudaRuntime;
-    use crate::tests::*;
+    use crate::tests::utilities::*;
 
     #[test]
     fn test_create_empty_graph() {
@@ -494,21 +494,23 @@ mod tests {
         let c = ((a + b) * a + b).output();
         cx.build_search_space_exclude_ops::<CudaRuntime, crate::block::Ops>();
         let mut rt = CudaRuntime::initialize(stream);
-        let data_a = random_vec(size);
-        let data_b = random_vec(size);
+        let data_a = random_f32_vec(size, 42, -0.5, 0.5);
+        let data_b = random_f32_vec(size, 43, -0.5, 0.5);
         rt.set_data(a, data_a.clone());
         rt.set_data(b, data_b.clone());
         rt = cx.search(rt, 5);
         rt.execute(&cx.dyn_map);
         let result1 = rt.get_f32(c);
         rt.execute(&cx.dyn_map);
-        assert_close(&result1, &rt.get_f32(c));
+        let eps = dtype_epsilon(luminal::op::DType::F32);
+        let tol = eps * TOLERANCE_SAFETY_FACTOR;
+        assert_close(&result1, &rt.get_f32(c), tol, tol);
         let expected: Vec<f32> = data_a
             .iter()
             .zip(&data_b)
             .map(|(a, b)| (a + b) * a + b)
             .collect();
-        assert_close(&result1, &expected);
+        assert_close(&result1, &expected, tol, tol);
     }
 
     #[test]
@@ -523,8 +525,8 @@ mod tests {
         let c = (a + b + a + b).output();
         cx.build_search_space_exclude_ops::<CudaRuntime, crate::block::Ops>();
         let mut rt = CudaRuntime::initialize(stream);
-        let data_a = random_vec(size);
-        let data_b = random_vec(size);
+        let data_a = random_f32_vec(size, 42, -0.5, 0.5);
+        let data_b = random_f32_vec(size, 43, -0.5, 0.5);
         rt.set_data(a, data_a.clone());
         rt.set_data(b, data_b.clone());
         rt = cx.search(rt, 5);
@@ -533,15 +535,17 @@ mod tests {
             rt.execute(&cx.dyn_map);
             results.push(rt.get_f32(c));
         }
+        let eps = dtype_epsilon(luminal::op::DType::F32);
+        let tol = eps * TOLERANCE_SAFETY_FACTOR;
         for result in &results {
-            assert_close(result, &results[0]);
+            assert_close(result, &results[0], tol, tol);
         }
         let expected: Vec<f32> = data_a
             .iter()
             .zip(&data_b)
             .map(|(a, b)| a + b + a + b)
             .collect();
-        assert_close(&results[0], &expected);
+        assert_close(&results[0], &expected, tol, tol);
     }
 
     #[test]
@@ -557,8 +561,8 @@ mod tests {
         let d = (c * a).output();
         cx.build_search_space_exclude_ops::<CudaRuntime, crate::block::Ops>();
         let mut rt = CudaRuntime::initialize(stream);
-        let data_a = random_vec(size);
-        let data_b = random_vec(size);
+        let data_a = random_f32_vec(size, 42, -0.5, 0.5);
+        let data_b = random_f32_vec(size, 43, -0.5, 0.5);
         rt.set_data(a, data_a.clone());
         rt.set_data(b, data_b.clone());
         cx.set_dim('s', size);
@@ -569,10 +573,12 @@ mod tests {
             .zip(&data_b)
             .map(|(a, b)| (a + b) * a)
             .collect();
-        assert_close(&rt.get_f32(d), &expected);
+        let eps = dtype_epsilon(luminal::op::DType::F32);
+        let tol = eps * TOLERANCE_SAFETY_FACTOR;
+        assert_close(&rt.get_f32(d), &expected, tol, tol);
         let size = 1024;
-        let data_a2 = random_vec(size);
-        let data_b2 = random_vec(size);
+        let data_a2 = random_f32_vec(size, 44, -0.5, 0.5);
+        let data_b2 = random_f32_vec(size, 45, -0.5, 0.5);
         rt.set_data(a, data_a2.clone());
         rt.set_data(b, data_b2.clone());
         cx.set_dim('s', size);
@@ -582,7 +588,7 @@ mod tests {
             .zip(&data_b2)
             .map(|(a, b)| (a + b) * a)
             .collect();
-        assert_close(&rt.get_f32(d), &expected2);
+        assert_close(&rt.get_f32(d), &expected2, tol, tol);
     }
 
     #[test]
@@ -597,14 +603,16 @@ mod tests {
         let c = (a + b).output();
         cx.build_search_space_exclude_ops::<CudaRuntime, crate::block::Ops>();
         let mut rt = CudaRuntime::initialize(stream);
-        let data_a = random_vec(size);
-        let data_b = random_vec(size);
+        let data_a = random_f32_vec(size, 42, -0.5, 0.5);
+        let data_b = random_f32_vec(size, 43, -0.5, 0.5);
         rt.set_data(a, data_a.clone());
         rt.set_data(b, data_b.clone());
         rt = cx.search(rt, 5);
         rt.execute(&cx.dyn_map);
         let expected: Vec<f32> = data_a.iter().zip(&data_b).map(|(a, b)| a + b).collect();
-        assert_close(&rt.get_f32(c), &expected);
+        let eps = dtype_epsilon(luminal::op::DType::F32);
+        let tol = eps * TOLERANCE_SAFETY_FACTOR;
+        assert_close(&rt.get_f32(c), &expected, tol, tol);
         assert!(rt.last_kernel_stats.iter().any(|s| s.name == "CudaGraph"));
     }
 
@@ -625,8 +633,8 @@ mod tests {
         let output = result.output();
         cx.build_search_space_exclude_ops::<CudaRuntime, crate::block::Ops>();
         let mut rt = CudaRuntime::initialize(stream);
-        let data_a = random_vec(size);
-        let data_b = random_vec(size);
+        let data_a = random_f32_vec(size, 42, -0.5, 0.5);
+        let data_b = random_f32_vec(size, 43, -0.5, 0.5);
         rt.set_data(a, data_a.clone());
         rt.set_data(b, data_b.clone());
         rt = cx.search(rt, 5);
@@ -638,6 +646,6 @@ mod tests {
             expected = expected.iter().zip(&data_a).map(|(r, a)| r + a).collect();
             expected = expected.iter().zip(&data_b).map(|(r, b)| r * b).collect();
         }
-        assert_close_precision(&rt.get_f32(output), &expected, 1e-2);
+        assert_close(&rt.get_f32(output), &expected, 1e-2, 1e-2);
     }
 }

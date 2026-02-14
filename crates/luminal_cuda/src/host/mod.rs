@@ -3,8 +3,12 @@ use std::{fmt::Debug, sync::Arc};
 use crate::cudarc::driver::{CudaSlice, CudaStream};
 use luminal::{op::EgglogOp, prelude::*};
 mod cublas;
+mod cublaslt;
 
-pub type Ops = (cublas::CuBlasSgemmV2,);
+pub type Ops = (
+    // cublas::CuBlasSgemmV2,
+    cublaslt::CuBlasLt,
+);
 
 /// Host operations that execute on the CPU but orchestrate GPU work.
 ///
@@ -30,6 +34,9 @@ pub trait HostOp: Debug + as_any::AsAny + EgglogOp {
     /// Returns the output buffer size in elements.
     /// Return 0 if this op doesn't have a single output buffer (e.g., CudaGraphOp).
     fn output_size(&self) -> Expression;
+
+    /// Returns the output buffer size in bytes (accounts for dtype).
+    fn output_bytes(&self) -> Expression;
 
     /// Returns additional nodes (beyond graph edges) that this op needs buffers for.
     ///

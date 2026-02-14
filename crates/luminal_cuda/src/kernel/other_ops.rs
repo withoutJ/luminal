@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
-use crate::{cuda_dtype, kernel::KernelOp, kernel::hlir::generate_dyn_dims_defines};
+use crate::{
+    cuda_dtype,
+    kernel::KernelOp,
+    kernel::hlir::{compile_kernel, dtype_includes, generate_dyn_dims_defines},
+};
 use cudarc::{
     driver::{CudaContext, CudaFunction, CudaModule, CudaSlice, CudaStream},
-    nvrtc::{CompileOptions, compile_ptx},
+    nvrtc::CompileOptions,
 };
 use itertools::Itertools;
 use luminal::{
@@ -102,6 +106,7 @@ impl KernelOp for KernelMeanReduce {
             .collect::<FxHashSet<_>>();
 
         let dtype = cuda_dtype(self.dtype);
+        let includes = dtype_includes(&[self.dtype]);
         let n_outputs: Expression = self.out_shape.iter().copied().product();
         let threads_per_block = 256; // 8 warps per block
         let (dyn_defines, _sorted_dims) = generate_dyn_dims_defines(&vars);
@@ -112,7 +117,7 @@ impl KernelOp for KernelMeanReduce {
         };
 
         let kernel = format!(
-            "
+            "{includes}
 #define WARP_SIZE 32
 #define THREADS_PER_BLOCK 256
 #define FULL_MASK 0xffffffff
@@ -170,7 +175,7 @@ extern \"C\" {{
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())
         } else {
-            let ptx = compile_ptx(&kernel).unwrap();
+            let ptx = compile_kernel(&kernel, &[self.dtype]);
             let module = stream.context().load_module(ptx).unwrap();
             let func = module.load_function("reduce_mean_k").unwrap();
             compile_cache.insert(kernel.clone(), (module.clone(), func.clone()));
@@ -192,12 +197,30 @@ extern \"C\" {{
         self.out_shape.iter().copied().product()
     }
 
+    fn output_bytes(&self) -> Expression {
+        let elem_size: Expression = match self.dtype {
+            DType::F32 | DType::Int => 4,
+            DType::F16 | DType::Bf16 => 2,
+            DType::Bool => 1,
+            DType::NvFp4 | DType::Mxfp4 => todo!("FP4 element size not yet implemented"),
+        }
+        .into();
+        self.output_size() * elem_size
+    }
+
     fn bytes_loaded(&self) -> Expression {
-        self.out_shape.iter().copied().product::<Expression>() * self.iters * 4
+        let elem_size: Expression = match self.dtype {
+            DType::F32 | DType::Int => 4,
+            DType::F16 | DType::Bf16 => 2,
+            DType::Bool => 1,
+            DType::NvFp4 | DType::Mxfp4 => todo!("FP4 element size not yet implemented"),
+        }
+        .into();
+        self.out_shape.iter().copied().product::<Expression>() * self.iters * elem_size
     }
 
     fn bytes_stored(&self) -> Expression {
-        self.output_size() * 4
+        self.output_bytes()
     }
 
     fn flops(&self) -> Expression {

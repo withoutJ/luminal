@@ -233,6 +233,11 @@ impl HostOp for CudaGraphOp {
         0.into()
     }
 
+    fn output_bytes(&self) -> Expression {
+        // CudaGraphOp doesn't have a single output - individual kernels have outputs
+        0.into()
+    }
+
     fn extra_buffer_nodes(&self) -> Vec<NodeIndex> {
         // Only return nodes that actually have buffers
         // Filter out nodes in buffer_sizes with size 0 (like MegakernelOps)

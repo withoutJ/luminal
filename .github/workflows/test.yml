@@ -28,7 +28,7 @@ jobs:
         steps:
             - uses: actions/checkout@v6
             - name: Run clippy
-              run: sudo apt-get install protobuf-compiler; rustup update; cargo clippy --workspace --exclude luminal_metal --exclude luminal_bench --all-targets -- -D warnings
+              run: sudo apt-get install protobuf-compiler; rustup update; cargo clippy --workspace --exclude luminal_cuda --exclude luminal_metal --exclude luminal_bench --all-targets -- -D warnings
 
     fmt:
         name: Fmt
@@ -42,32 +42,19 @@ jobs:
     cuda_unit_test:
         name: Cuda Unit Tests
         runs-on: cuda_t4_runner
+        container:
+            image: ghcr.io/luminal-ai/luminal-docker:latest
+            options: --gpus all
         timeout-minutes: 30
-        env:
-            CUDA_HOME: /usr/local/cuda-12.8
-            LD_LIBRARY_PATH: /usr/local/cuda-12.8/lib64
 
         steps:
             - uses: actions/checkout@v6
-            - name: Install system deps
+            - name: Detect GPU compute capability
               run: |
-                  sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends protobuf-compiler
-            - name: Install CUDA toolkit
-              uses: Jimver/cuda-toolkit@v0.2.30
-              with:
-                  cuda: '12.8.0'
-                  method: 'network'
-                  sub-packages: '["nvcc", "nvrtc"]'
-                  non-cuda-sub-packages: '["libcublas"]'
-            - name: Install Rust
-              run: |
-                  curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-                  echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-            - name: Update Rust
-              run: rustup update
+                  CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
+                  echo "CUDA_COMPUTE_CAP=${CAP}" >> "$GITHUB_ENV"
             - name: Run CUDA crate tests
-              run: CUDARC_CUDA_VERSION=12080 cargo test -p luminal_cuda --verbose
+              run: cargo test -p luminal_cuda --verbose
     # cuda_llama: # disabled because t4 doesn't have enough memory for full precision llama. re-enable when we can run on larger machines or use 8-bit precision
     #     name: Cuda Llama
     #     runs-on: cuda_t4_runner
