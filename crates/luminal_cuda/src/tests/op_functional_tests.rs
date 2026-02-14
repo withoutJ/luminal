@@ -529,3 +529,59 @@ proptest! {
         fuzz_test_cuda_genomes_impl(seed);
     }
 }
+
+fn run_embed_test(vocab_size: usize, embed_dim: usize, seq_len: usize, seed: u64) {
+    let Some(stream) = get_cuda_stream() else {
+        println!("CUDA not available, skipping test");
+        return;
+    };
+
+    let mut cx = Graph::default();
+    let token_ids = cx.tensor(seq_len).as_dtype(luminal::op::DType::Int);
+    let embed_table = cx.tensor((vocab_size, embed_dim));
+    let output = embed_table
+        .gather(
+            (token_ids * embed_dim).expand_dim(1, embed_dim)
+                + cx.arange(embed_dim).expand_dim(0, seq_len),
+        )
+        .output();
+
+    cx.build_search_space::<CudaRuntime>();
+    let mut rt = CudaRuntime::initialize(stream);
+
+    let token_data: Vec<i32> = random_i32_vec(seq_len, seed, 0, vocab_size as i32 - 1);
+    let embed_data: Vec<f32> = random_f32_vec(vocab_size * embed_dim, seed, -0.5, 0.5);
+
+    rt.set_data(token_ids, token_data.clone());
+    rt.set_data(embed_table, embed_data.clone());
+    rt = cx.search(rt, 5);
+    rt.execute(&cx.dyn_map);
+
+    let result = rt.get_f32(output);
+
+    let mut expected = vec![0.0f32; seq_len * embed_dim];
+    for i in 0..seq_len {
+        let tid = token_data[i] as usize;
+        for j in 0..embed_dim {
+            expected[i * embed_dim + j] = embed_data[tid * embed_dim + j];
+        }
+    }
+
+    let eps = dtype_epsilon(luminal::op::DType::F32);
+    let tol = eps * TOLERANCE_SAFETY_FACTOR;
+    assert_close(&result, &expected, tol, tol);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(5))]
+
+    #[test]
+    fn test_embed_proptest(
+        vocab_size in 10usize..200,
+        embed_dim in 8usize..128,
+        seq_len in 1usize..32,
+        seed in any::<u64>(),
+    ) {
+        run_embed_test(vocab_size, embed_dim, seq_len, seed);
+    }
+}
